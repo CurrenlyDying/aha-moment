@@ -26,8 +26,8 @@ NUM_LAYERS = 2        # How many LSTM layers stacked on top of each other
 LR = 0.002            # Learning rate (how big a step gradient descent takes each update)
 SEQ_LEN = 100         # How many characters per training sequence
 EPOCHS = 5000         # How many training iterations
-PRINT_EVERY = 250     # How often we print loss
-TEMP = 0.8            # Temperature for sampling in generate() (not used in training loop)
+PRINT_EVERY = 250     # How often we print loss + sample text
+TEMP = 0.8            # Temperature for sampling in generate()
 SAVE_PATH = "genesis_brain.pth"   # Where we save model weights
 VOCAB_PATH = "genesis_vocab.pkl"  # Where we save the character ↔ index mappings
 
@@ -183,6 +183,69 @@ class TinyBrain(nn.Module):
 
         return predicted
 
+# Helper to map loss values to a fun “training stage” label.
+def training_status(loss_value: float) -> str:
+    """
+    Rough, dataset-specific mapping from loss to "what the model can do now".
+    Calibrated on tiny-shakespeare + this architecture.
+    """
+
+    if loss_value > 3.3:
+        return (
+            "(Status: Pure static.) "
+            "Mostly random characters. The model hasn't really latched onto the alphabet yet."
+        )
+    elif loss_value > 2.9:
+        return (
+            "(Status: Babbling.) "
+            "It knows which characters and punctuation are common. "
+            "You might see an occasional real word, but it's mostly soup."
+        )
+    elif loss_value > 2.6:
+        return (
+            "(Status: Word seeds online.) "
+            "Common short words like 'the', 'and', 'of' appear, spacing looks less random, "
+            "but sentences are still nonsense overall."
+        )
+    elif loss_value > 2.3:
+        return (
+            "(Status: Discovered words. Getting based.) "
+            "Most tokens look like real words, especially function words. "
+            "You'll see Shakespeare-flavoured word salad: readable pieces, but no real grammar yet."
+        )
+    elif loss_value > 2.1:
+        return (
+            "(Status: Shakespeare word-salad.) "
+            "Pronouns, clauses, and punctuation start to look right. "
+            "Lines feel like broken Shakespeare: some phrases are surprisingly good, "
+            "but global meaning is still fuzzy."
+        )
+    elif loss_value > 1.9:
+        return (
+            "(Status: Constructing grammar. High Sigma reasoning.) "
+            "Sentence structure is mostly correct. Subject–verb patterns, commas, and rhythm "
+            "are there. Many lines read like plausible play dialogue, with only occasional nonsense."
+        )
+    elif loss_value > 1.8:
+        return (
+            "(Status: Stage-play structure emerging.) "
+            "Character names and play formatting (NAME:, line breaks) start to appear. "
+            "The model has internalized that it's writing a script, not just random prose."
+        )
+    elif loss_value < 1.478:
+        return (
+            "(Status: META features emerging.) "
+            "The model seems to have pretty suddenly started to show some kind of Poetry. "
+            "The model has internalized that it's writing a mechanic allowing to connect words in a more complex way, not just random prose."
+            "They **seened** to have broke out of local minima and got the loss down significantly. After struggling for a while, it seems to have found a better way to organize its knowledge."       
+        )
+    else:
+        return (
+            "(Status: Channeling ghost of Shakespeare.) "
+            "Coherent lines, stage cues, and style are all in place. "
+            "Further training mostly polishes style and reduces weird glitches."
+        )
+
 
 # Create the model with our vocab size and hyperparameters
 model = TinyBrain(vocab_size, HIDDEN_SIZE, NUM_LAYERS)
@@ -195,6 +258,20 @@ optimizer = optim.Adam(model.parameters(), lr=LR)
 # Combines softmax + negative log-likelihood.
 # It measures how "wrong" our predicted probabilities are for the true next char.
 criterion = nn.CrossEntropyLoss()
+
+# --- SHOW UNTRAINED SAMPLE FOR “CRINGE BASELINE” ---
+
+print("\n-----------------------\n")
+print("--- INITIALIZING ENTITY ---\n")
+
+with torch.no_grad():
+    # Generate from a random-ish seed before training so we can see pure noise.
+    initial_sample = model.generate(start_str="AF", predict_len=120, temperature=1.0)
+
+print("Initial thought (Untrained):\n")
+print(repr(initial_sample))
+print("\n(See? Total cringe. Random noise.)\n")
+print("-----------------------\n")
 
 # --- STEP 3: THE GRIND (TRAINING LOOP) ---
 
@@ -242,10 +319,37 @@ for epoch in range(1, EPOCHS + 1):
     # Track average loss for printing
     avg_loss += loss.item()
 
-    # Occasionally print training progress
+    # Occasionally print training progress + a sample generation
     if epoch % PRINT_EVERY == 0:
-        print(f"Step {epoch}/{EPOCHS} | Loss: {avg_loss / PRINT_EVERY:.4f}")
+        mean_loss = avg_loss / PRINT_EVERY
+        print(f"Step {epoch}/{EPOCHS} | Loss: {mean_loss:.4f}\n")
+
+        # Generate a short sample to visualize what the model has learned so far.
+        with torch.no_grad():
+            sample = model.generate(start_str="The ", predict_len=160, temperature=TEMP)
+
+        # Replace newlines just to keep the log compact and slice to a reasonable length.
+        pretty_sample = sample.replace("\n", " ")[:200]
+        print("Output:", pretty_sample)
+        print()
+        print(training_status(mean_loss))
+        print("\n" + "-" * 30 + "\n")
+
         avg_loss = 0.0
+
+# --- TRAINING COMPLETE + FINAL GENERATION ---
+
+elapsed = time.time() - start_time
+print("--- TRAINING COMPLETE ---")
+print(f"Total training time: {elapsed:.1f} seconds\n")
+print("The model is now a shadow of Shakespeare.\n")
+
+with torch.no_grad():
+    final_text = model.generate(start_str="The king ", predict_len=400, temperature=0.7)
+
+print("FINAL GENERATION:\n")
+print(final_text)
+print("\n" + "-" * 30 + "\n")
 
 # --- STEP 4: SAVE THE BRAIN ---
 
